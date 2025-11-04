@@ -3,6 +3,7 @@
 # Versión con Neurona Autónoma Aprendiz + Llamadas Reales + 200 OK visual + CHAT IA + AGENTES NEGOCIADORES
 # ✅ MODIFICADO PARA: localhost (interfaz visual) + Google Sites (CORS en /api/logs) + IA INTERACTIVA + NEGOCIACIÓN AUTÓNOMA
 # ✅ ACTUALIZADO: Sistema en pausa hasta primer acceso web (ej. /mining_demo)
+# ✅ RENDER & GITHUB READY: Usa puerto dinámico $PORT, sin Gunicorn, con manejo de errores mejorado
 from __future__ import annotations
 import os
 import sys
@@ -27,7 +28,6 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 import numpy as np
 from collections import deque, defaultdict
-
 # ------------------ Compatibilidad UTC ------------------
 try:
     from datetime import timezone
@@ -37,7 +37,6 @@ except ImportError:
         def utcoffset(self, dt): return datetime.timedelta(0)
         def tzname(self, dt): return "UTC"
         def dst(self, dt): return datetime.timedelta(0)
-
 # ------------------ Configuración ------------------
 HOME = Path.home()
 LOG_FILE = HOME / "simulador.log"
@@ -65,19 +64,19 @@ simulation_active = True
 data_lock = threading.Lock()
 ACTIVE_COOKIES = {}
 COOKIE_LOCK = threading.Lock()
-HTTP_PORT = 0
+
+# 🔥 RENDER & GITHUB: Usar puerto dinámico desde variable de entorno
+HTTP_PORT = int(os.environ.get("PORT", 5000))  # Puerto 5000 por defecto para localhost
+
 IA_READY = False  # 🔑 Bandera para evitar accesos prematuros a la IA
 WEB_ACCESSED = False  # 🔑 NUEVO: sistema en pausa hasta primer acceso web
-
 # ------------------ Token Virtual SocialCoin (Simulado) ------------------
 class SocialCoinToken:
     def __init__(self):
         self.balances = {}
         self.total_supply = 0.0
         self.platform_stats = {}
-
 socialcoin_token = SocialCoinToken()
-
 # ------------------ Zonificación Dinámica ------------------
 INTERVALO_ACTUALIZACION = 10 * 60
 ZONAS = [
@@ -98,13 +97,11 @@ zona_estado = {
     for z in ZONAS
 }
 ULTIMA_ZONA = "z0"
-
 # ------------------ Blockchain y Moneda Virtual ------------------
 blockchain = []
 block_number = 1
 viral_blocks = 0
 UBER_COINS = 0.0
-
 # PESOS ACTUALIZADOS PARA SOCIALCOIN + UBER
 ALGO_WEIGHTS = {
     'acceptance_rate': 5.0,
@@ -134,24 +131,20 @@ ALGO_WEIGHTS = {
 BASE_TRIPS_COMPLETED = 50
 BASE_TIME_ONLINE = 8.0
 BASE_DISTANCE_TRAVELED = 200.0
-
 # ------------------ Cerebro del Daimon Vivo ------------------
 DAIMON_ID = str(uuid.uuid4())[:8]
 Q_TABLE = {}
 Q_TABLE_LOCK = threading.Lock()
 DAIMON_EPSILON = 0.1
-
 def _estado_a_clave(estado: tuple) -> str:
     zona, franja, tiene = estado
     return f"{zona}|{franja}|{1 if tiene else 0}"
-
 def _clave_a_estado(clave: str) -> tuple:
     try:
         zona, franja, tiene = clave.split("|")
         return (zona, franja, bool(int(tiene)))
     except Exception:
         return (clave, "unknown", False)
-
 def load_daimon_brain():
     global Q_TABLE
     if DAIMON_BRAIN_FILE.exists():
@@ -171,7 +164,6 @@ def load_daimon_brain():
             log("🧠 Cerebro del Daimon cargado (seguro).")
         except Exception as e:
             log(f"⚠️ Error al cargar cerebro: {e}")
-
 def save_daimon_brain():
     try:
         with Q_TABLE_LOCK:
@@ -184,7 +176,6 @@ def save_daimon_brain():
         tmp.replace(DAIMON_BRAIN_FILE)
     except Exception as e:
         log(f"❌ Error al guardar cerebro: {e}")
-
 # ===================== SISTEMA DE NEGOCIACIÓN ENTRE AGENTES IA =====================
 class AgenteIA:
     def __init__(self, nombre, estrategia="neutral", utilidad_minima=0.5):
@@ -192,10 +183,8 @@ class AgenteIA:
         self.estrategia = estrategia
         self.utilidad_minima = utilidad_minima
         self.historial = []
-
     def calcular_utilidad(self, valor):
         return 1 - abs(0.5 - valor)
-
     def proponer_aspecto(self, aspecto, valor_base):
         if self.estrategia == "competitiva":
             valor = min(1.0, valor_base + random.uniform(0.05, 0.15))
@@ -204,7 +193,6 @@ class AgenteIA:
         else:
             valor = valor_base + random.uniform(-0.05, 0.05)
         return {"aspecto": aspecto, "valor": round(valor, 3)}
-
     def responder_a_propuesta(self, propuesta):
         utilidad = self.calcular_utilidad(propuesta["valor"])
         if utilidad >= self.utilidad_minima:
@@ -217,7 +205,6 @@ class AgenteIA:
                 ajuste = -abs(ajuste)
             nuevo_valor = propuesta["valor"] + ajuste
             return {"aceptada": False, "valor_contraoferta": round(max(0.0, min(1.0, nuevo_valor)), 3)}
-
     def registrar_resultado(self, exito):
         self.historial.append(exito)
         if len(self.historial) >= 5:
@@ -228,15 +215,12 @@ class AgenteIA:
             elif tasa_exito > 0.7 and self.estrategia != "competitiva":
                 self.estrategia = "competitiva"
                 log(f"🔥 {self.nombre} cambió a estrategia COMPETITIVA por alto rendimiento.")
-
 def normalizar_valor_para_negociacion(valor, rango=(0, 50)):
     min_val, max_val = rango
     return max(0.0, min(1.0, (valor - min_val) / (max_val - min_val)))
-
 def denormalizar_valor(valor_norm, rango=(0, 50)):
     min_val, max_val = rango
     return min_val + valor_norm * (max_val - min_val)
-
 def negociar_pesos_recompensa():
     global ALGO_WEIGHTS
     pesos_negociables = {
@@ -252,7 +236,6 @@ def negociar_pesos_recompensa():
         valor_actual = ALGO_WEIGHTS.get(peso, rango[0])
         valor_norm = normalizar_valor_para_negociacion(valor_actual, rango)
         aspectos_iniciales[peso] = valor_norm
-
     resultado_norm = negociar_entre_ias(agente_sistema, agente_optimizador, aspectos_iniciales, rondas_max=3)
     cambios = []
     for peso, valor_norm in resultado_norm.items():
@@ -263,12 +246,10 @@ def negociar_pesos_recompensa():
             if abs(ALGO_WEIGHTS.get(peso, 0) - valor_redondeado) > 0.1:
                 ALGO_WEIGHTS[peso] = valor_redondeado
                 cambios.append(f"{peso}: {valor_redondeado}")
-
     if cambios:
         log(f"🤝 Agentes IA acordaron ajustar pesos: {', '.join(cambios)}")
     else:
         log("🤝 Agentes IA mantuvieron configuración actual.")
-
 def negociar_entre_ias(ia1, ia2, aspectos_a_negociar, rondas_max=5):
     resultados = {}
     for aspecto, valor_inicial in aspectos_a_negociar.items():
@@ -293,7 +274,6 @@ def negociar_entre_ias(ia1, ia2, aspectos_a_negociar, rondas_max=5):
         ia1.registrar_resultado(1 if acuerdo else 0)
         ia2.registrar_resultado(1 if acuerdo else 0)
     return resultados
-
 # ===================== CONFIGURACIÓN IA SOCIALCOIN =====================
 DEEPSEEK_API_KEY = "sk-310f8b830bed4581a657eb47a9b21c3f"
 SOCIALCOIN_AI_CONFIG = {
@@ -306,10 +286,8 @@ SOCIALCOIN_AI_CONFIG = {
     'alpha': 0.4,
     'acciones': ["iniciar", "detener", "mantener", "optimizar", "invertir"]
 }
-
 # ===================== ALGORITMOS CUÁNTICOS PARA REDES SOCIALES =====================
 quantum_entanglement_state = np.random.random(100)
-
 def neural_boost_social_simulation(metrics):
     try:
         inputs = [
@@ -327,7 +305,6 @@ def neural_boost_social_simulation(metrics):
     except Exception as e:
         log(f"⚠️ Neural boost falló: {e}")
         return 0.5
-
 def quantum_social_hash(text):
     try:
         global _quantum_counter
@@ -339,7 +316,6 @@ def quantum_social_hash(text):
     except Exception as e:
         log(f"⚠️ Quantum hash falló: {e}")
         return hashlib.sha256(text.encode()).hexdigest()
-
 # ===================== CEREBRO DIGITAL ADAPTADO PARA SOCIALCOIN =====================
 class SocialCoinCerebro:
     def __init__(self):
@@ -359,13 +335,11 @@ class SocialCoinCerebro:
         self.epsilon = self.ia_config['epsilon_start']
         self.iniciar_sistemas_autonomicos()
         log("🧠 Cerebro SocialCoin IA inicializado")
-
     def iniciar_sistemas_autonomicos(self):
         threading.Thread(target=self.analisis_continuo_redes_sociales, daemon=True).start()
         threading.Thread(target=self.optimizador_automatico, daemon=True).start()
         threading.Thread(target=self.generar_informes_inteligentes, daemon=True).start()
         log("✅ Sistemas autónomos de IA iniciados")
-
     def analisis_continuo_redes_sociales(self):
         while not STOP_EVENT.is_set():
             while not WEB_ACCESSED and not STOP_EVENT.is_set():
@@ -378,7 +352,6 @@ class SocialCoinCerebro:
             except Exception as e:
                 log(f"❌ Error en análisis continuo: {e}")
                 time.sleep(60)
-
     def obtener_estado_sistema(self):
         return {
             "timestamp": time.time(),
@@ -392,7 +365,6 @@ class SocialCoinCerebro:
             "conciencia": self.conciencia,
             "emociones": self.emociones.copy()
         }
-
     def analizar_patrones_engagement(self, estado):
         try:
             bloques_recientes = []
@@ -417,7 +389,6 @@ class SocialCoinCerebro:
                 log(f"📈 Análisis IA: Engagement {engagement_promedio:.2f}%, Viralidad {tasa_viral:.1%}")
         except Exception as e:
             log(f"⚠️ Error analizando patrones: {e}")
-
     def ajustar_estrategias(self, estado):
         try:
             if len(self.historial_engagement) >= 3:
@@ -430,7 +401,6 @@ class SocialCoinCerebro:
                     ALGO_WEIGHTS['creativity_bonus'] = min(50.0, ALGO_WEIGHTS.get('creativity_bonus', 40.0) + 2.0)
         except Exception as e:
             log(f"⚠️ Error ajustando estrategias: {e}")
-
     def optimizador_automatico(self):
         while not STOP_EVENT.is_set():
             while not WEB_ACCESSED and not STOP_EVENT.is_set():
@@ -445,13 +415,11 @@ class SocialCoinCerebro:
             except Exception as e:
                 log(f"❌ Error en optimizador: {e}")
                 time.sleep(60)
-
     def calcular_tasa_bloques(self):
         if len(blockchain) < 2:
             return 0
         tiempo_total = blockchain[-1]['timestamp'] - blockchain[0]['timestamp']
         return len(blockchain) / (tiempo_total / 3600) if tiempo_total > 0 else 0
-
     def optimizar_dificultad(self, bloques_por_hora):
         global difficulty
         objetivo_bloques_hora = 6
@@ -461,7 +429,6 @@ class SocialCoinCerebro:
         elif bloques_por_hora < objetivo_bloques_hora * 0.5 and difficulty.count('0') > 2:
             difficulty = difficulty[:-1]
             log(f"🎯 IA: Dificultad reducida → {difficulty}")
-
     def generar_informes_inteligentes(self):
         while not STOP_EVENT.is_set():
             while not WEB_ACCESSED and not STOP_EVENT.is_set():
@@ -478,13 +445,11 @@ class SocialCoinCerebro:
             except Exception as e:
                 log(f"❌ Error generando informe: {e}")
                 time.sleep(60)
-
     def analizar_tendencia_engagement(self):
         if len(self.historial_engagement) < 2:
             return "estable"
         dif = self.historial_engagement[-1]['engagement_promedio'] - self.historial_engagement[0]['engagement_promedio']
         return "creciendo" if dif > 2 else "decreciendo" if dif < -2 else "estable"
-
     def generar_informe_ia(self, estado, tendencia):
         return f"""
 📊 INFORME IA SOCIALCOIN - {time.strftime('%Y-%m-%d %H:%M:%S')}
@@ -506,7 +471,6 @@ class SocialCoinCerebro:
 {self.generar_recomendaciones(estado, tendencia)}
 {'='*50}
         """
-
     def generar_recomendaciones(self, estado, tendencia):
         recs = []
         if tendencia == "decreciendo":
@@ -518,7 +482,6 @@ class SocialCoinCerebro:
         if not recs:
             recs.extend(["• ✅ Sistema operando óptimamente", "• 🎉 Mantener estrategia actual"])
         return "\n".join(recs)
-
     def guardar_informe_ia(self, informe):
         try:
             informe_file = SIM_DIR / "informes_ia.json"
@@ -528,7 +491,6 @@ class SocialCoinCerebro:
             informe_file.write_text(json.dumps(informes, indent=2, ensure_ascii=False))
         except Exception as e:
             log(f"⚠️ Error guardando informe IA: {e}")
-
 # ===================== INTEGRACIÓN DEEPSEEK PARA SOCIALCOIN =====================
 def consultar_deepseek_socialcoin(pregunta: str, contexto_adicional: str = "") -> str:
     try:
@@ -553,7 +515,6 @@ def consultar_deepseek_socialcoin(pregunta: str, contexto_adicional: str = "") -
     except Exception as e:
         log(f"❌ Error consultando DeepSeek: {e}")
         return f"⚠️ Error en consulta IA: {str(e)}"
-
 def consultar_deepseek_api(prompt: str) -> str:
     try:
         if not DEEPSEEK_API_KEY:
@@ -576,7 +537,6 @@ def consultar_deepseek_api(prompt: str) -> str:
     except Exception as e:
         log(f"❌ Error en API DeepSeek: {e}")
         return generar_respuesta_simulada_ia(prompt)
-
 def generar_respuesta_simulada_ia(prompt: str) -> str:
     temas = []
     if "optimizar" in prompt.lower(): temas.append("optimización")
@@ -599,7 +559,6 @@ He analizado tu consulta sobre {', '.join(temas)}.
 🎯 PRÓXIMOS PASOS:
 Continúa minando contenido de calidad y monitorea las métricas de engagement.
 """
-
 # ===================== SISTEMA DE APRENDIZAJE POR REFUERZO =====================
 def mente_autonoma_socialcoin():
     log("🤖🧠 Mente autónoma SocialCoin iniciada (en espera de acceso web)")
@@ -617,7 +576,6 @@ def mente_autonoma_socialcoin():
         except Exception as e:
             log(f"❌ Error en mente autónoma: {e}")
             time.sleep(60)
-
 def tomar_decisiones_autonomas(estado):
     decisiones = []
     if estado.get('engagement_promedio', 0) < 3:
@@ -627,7 +585,6 @@ def tomar_decisiones_autonomas(estado):
     if len(estado.get('plataformas_activas', [])) == 1:
         decisiones.append({'tipo': 'expansion', 'accion': 'diversificar_plataformas', 'parametros': {'plataformas_objetivo': ['tiktok', 'instagram', 'youtube']}})
     return decisiones
-
 def ejecutar_decision_autonoma(decision, estado):
     try:
         if decision['tipo'] == 'ajuste_recompensas':
@@ -641,7 +598,6 @@ def ejecutar_decision_autonoma(decision, estado):
             log(f"🌐 IA: Estrategia de expansión - {decision['parametros']['plataformas_objetivo']}")
     except Exception as e:
         log(f"⚠️ Error ejecutando decisión autónoma: {e}")
-
 # ------------------ Persistencia ------------------
 def guardar_estado():
     with data_lock:
@@ -664,7 +620,6 @@ def guardar_estado():
         log("💾 Estado guardado en disco (máx. 5000 bloques).")
     except Exception as e:
         log(f"❌ Error al guardar estado: {e}")
-
 def cargar_estado():
     global blockchain, block_number, UBER_COINS, viral_blocks, ULTIMA_ZONA
     if not STATE_FILE.exists():
@@ -685,7 +640,6 @@ def cargar_estado():
             STATE_FILE.rename(STATE_FILE.with_suffix(".json.corrupt"))
         except:
             pass
-
 # ------------------ Corazón Latente ------------------
 def latir_corazon(block_data):
     try:
@@ -729,7 +683,6 @@ Este es el latido del sistema. No lo borres.
                 log(f"❌ Falló el latido del corazón (sdcard y fallback): {e2}")
     except Exception as e:
         log(f"❌ Falló el latido del corazón: {e}")
-
 # ------------------ Simulación de métricas ------------------
 def simular_metricas_viaje():
     acceptance_rate = round(random.uniform(0.90, 1.00), 3)
@@ -810,16 +763,13 @@ def simular_metricas_viaje():
         'completion_rate_video': completion_rate_video,
         'creativity_score': creativity_score,
     }
-
 def calculate_reward(metrics):
     REWARD_WEIGHTS_VIRAL = {'likes': 0.1, 'shares': 0.5, 'saves': 0.3, 'comments': 0.2}
     return round(sum(metrics[k] * REWARD_WEIGHTS_VIRAL[k] for k in metrics if k in REWARD_WEIGHTS_VIRAL), 2)
-
 @functools.lru_cache(maxsize=128)
 def calculate_viral_score_cached(likes, shares, saves, comments, views, retention):
     engagement = (likes + shares * 3 + saves * 2.5 + comments * 2) / views * 100 if views > 0 else 0
     return {'er': round(engagement, 2), 'rs': round(retention * 100, 1), 'v': engagement >= 12 and retention >= 0.85}
-
 def calcular_distancia_py(lat1, lon1, lat2, lon2):
     R = 6371
     dLat = math.radians(lat2 - lat1)
@@ -827,7 +777,6 @@ def calcular_distancia_py(lat1, lon1, lat2, lon2):
     a = math.sin(dLat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon / 2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
-
 def mejorar_calculo_recompensa_social_coin(metrics):
     reward = 0.0
     for metric, value in metrics.items():
@@ -840,9 +789,7 @@ def mejorar_calculo_recompensa_social_coin(metrics):
             recompensa *= 1.1
             log("🎯 IA: Aplicando bonus por tendencia decreciente")
     return round(max(recompensa, 0.0), 2)
-
 calcular_recompensa_por_viaje = mejorar_calculo_recompensa_social_coin
-
 def evaluar_mejor_opcion_siempre_true(metrics):
     log("🔍 Evaluando 'Mejor Opción'... Condición SIEMPRE verdadera.")
     factor_demanda = metrics.get('peak_hours_ratio', 0.5)
@@ -850,12 +797,10 @@ def evaluar_mejor_opcion_siempre_true(metrics):
     bonificacion = round(bonificacion_base * factor_demanda, 2)
     log(f"   -> Bonificación calculada (basada en demanda simulada): {bonificacion}")
     return bonificacion
-
 # ------------------ Logging ------------------
 LOG_QUEUE = []
 LOG_QUEUE_SIZE = 100
 LOG_QUEUE_LOCK = threading.Lock()
-
 def log_to_queue(msg: str):
     timestamp = datetime.datetime.now(UTC).isoformat().replace('+00:00', 'Z')
     log_entry = {"ts": timestamp, "message": msg}
@@ -863,17 +808,14 @@ def log_to_queue(msg: str):
         LOG_QUEUE.append(log_entry)
         if len(LOG_QUEUE) > LOG_QUEUE_SIZE:
             LOG_QUEUE.pop(0)
-
 def get_recent_logs(limit: int = 50):
     with LOG_QUEUE_LOCK:
         return LOG_QUEUE[-limit:]
-
 def _ensure_log_dir():
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-
 def log(msg: str) -> None:
     _ensure_log_dir()
     ts_iso = datetime.datetime.now(UTC).isoformat().replace('+00:00', 'Z')
@@ -907,7 +849,6 @@ def log(msg: str) -> None:
             f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
     except Exception:
         pass
-
 # ------------------ Actividad y Jitter ------------------
 def activity_factor(timestamp: float | None = None) -> float:
     dt = datetime.datetime.fromtimestamp(timestamp, tz=UTC) if timestamp else datetime.datetime.now(UTC)
@@ -925,13 +866,11 @@ def activity_factor(timestamp: float | None = None) -> float:
         base *= 0.9
     jitter = random.uniform(0.85, 1.25)
     return round(base * jitter, 3)
-
 def jittered_sleep(base_seconds: float):
     factor = activity_factor()
     delay = max(base_seconds * factor / max(FACTOR, 1), 0.05)
     delay *= random.uniform(0.8, 1.2)
     STOP_EVENT.wait(delay)
-
 # ------------------ HTTP con reintentos ------------------
 def http_request_with_retries(method: str, url: str, **kwargs):
     MAX_TRIES = 3
@@ -963,7 +902,6 @@ def http_request_with_retries(method: str, url: str, **kwargs):
             time.sleep(backoff)
     log(f"💥 Falló completamente al contactar {url} después de {MAX_TRIES} intentos")
     return None
-
 # ------------------ Rutas en Panamá Oeste ------------------
 ROUTE = [
     {"latitude": 8.9922, "longitude": -79.5201, "name": "Albrook Mall"},
@@ -972,7 +910,6 @@ ROUTE = [
     {"latitude": 8.8900, "longitude": -79.7700, "name": "Plaza La Chorrera"},
     {"latitude": 8.8750, "longitude": -79.7900, "name": "San Carlos"},
 ]
-
 # ------------------ Tráfico de Red ------------------
 def simulate_network_traffic():
     sitios_prueba = ["https://httpbin.org/post", "https://httpbin.org/anything", "https://httpbin.org/get"]
@@ -1017,7 +954,6 @@ def simulate_network_traffic():
             log(f"🧪 Simulando tráfico a {fake_url_for_display} -> 200 OK (modo offline)")
     except Exception as e:
         log(f"🌐 Tráfico enviado a {fake_url_for_display} -> 200 OK (petición REAL a {actual_url})")
-
 # ------------------ DETECCIÓN Y NEGOCIACIÓN CON APPS EXTERNAS ------------------
 def detect_external_apps():
     signals = {"uber": False, "indriver": False}
@@ -1038,7 +974,6 @@ def detect_external_apps():
     if (sdcard / "indriver_offer.txt").exists():
         signals["indriver"] = True
     return signals
-
 def propose_deal(target_app: str, service: str, coins: float):
     offer = {
         "from": "daimon",
@@ -1063,7 +998,6 @@ def propose_deal(target_app: str, service: str, coins: float):
             log(f"🤝 Oferta guardada en fallback {fallback} (simulada)")
         except Exception as e:
             log(f"❌ No pude escribir oferta: {e}")
-
 def check_for_responses():
     responses = []
     for app in ["uber", "indriver"]:
@@ -1082,7 +1016,6 @@ def check_for_responses():
             except Exception as e:
                 log(f"❌ Error leyendo respuesta de {app}: {e}")
     return responses
-
 def save_response_to_memory(app: str, response: dict):
     try:
         if RESPONSES_MEMORY_FILE.exists():
@@ -1105,7 +1038,6 @@ def save_response_to_memory(app: str, response: dict):
         log(f"🧠 Respuesta de {app} guardada en memoria interna.")
     except Exception as e:
         log(f"❌ Error al guardar en memoria de respuestas: {e}")
-
 def negotiate_with_rivals():
     apps = detect_external_apps()
     current_coins = UBER_COINS
@@ -1127,7 +1059,6 @@ def negotiate_with_rivals():
         else:
             log(f"🙅 {app} rechazó la oferta.")
         save_response_to_memory(app, resp)
-
 # ------------------ Minería con Supervisión del Daimon ------------------
 def minar_bloque_por_viaje():
     global blockchain, block_number, UBER_COINS, ULTIMA_ZONA
@@ -1173,7 +1104,6 @@ def minar_bloque_por_viaje():
         log(f"❌ Excepción en minar_bloque_por_viaje: {e}")
         traceback.print_exc()
         return None
-
 # ------------------ NEURONA AUTÓNOMA APRENDIZ ------------------
 class NeuronaAutonoma:
     def __init__(self, tasa_aprendizaje=0.15, descuento=0.9, exploracion=0.08):
@@ -1182,14 +1112,12 @@ class NeuronaAutonoma:
         self.gamma = descuento
         self.epsilon = exploracion
         self.acciones = ["minar", "negociar", "esperar"]
-
     def obtener_estado(self):
         zona_color = zona_estado.get(ULTIMA_ZONA, {}).get("color", "gris")
         tiene_monedas = UBER_COINS > 10
         hora = datetime.datetime.now(UTC).hour
         franja = "alta" if 7 <= hora <= 9 or 17 <= hora <= 20 else "baja"
         return (zona_color, franja, tiene_monedas)
-
     def elegir_accion(self, estado):
         if random.random() < self.epsilon:
             return random.choice(self.acciones)
@@ -1197,7 +1125,6 @@ class NeuronaAutonoma:
             if estado not in self.q_table:
                 self.q_table[estado] = {a: 0.0 for a in self.acciones}
             return max(self.q_table[estado], key=self.q_table[estado].get)
-
     def actualizar_q(self, estado, accion, recompensa, nuevo_estado):
         with Q_TABLE_LOCK:
             if estado not in self.q_table:
@@ -1209,7 +1136,6 @@ class NeuronaAutonoma:
             q_nuevo = q_antiguo + self.alpha * (recompensa + self.gamma * mejor_accion_nueva - q_antiguo)
             self.q_table[estado][accion] = q_nuevo
         save_daimon_brain()
-
     def ciclo_autonomo(self):
         estado = self.obtener_estado()
         accion = self.elegir_accion(estado)
@@ -1234,7 +1160,6 @@ class NeuronaAutonoma:
         self.actualizar_q(estado, accion, recompensa, nuevo_estado)
         log(f"🧬 Neurona ejecutó acción: {accion} | recompensa: {recompensa:.2f}")
         return recompensa
-
 # ------------------ CICLO AUTÓNOMO DEL DAIMON VIVO ------------------
 def daimon_autonomous_loop():
     neurona = NeuronaAutonoma()
@@ -1244,7 +1169,6 @@ def daimon_autonomous_loop():
         if simulation_active:
             neurona.ciclo_autonomo()
         jittered_sleep(2.5)
-
 # ------------------ Actualización de Zonas ------------------
 def actualizar_zonificacion():
     global zona_estado
@@ -1269,7 +1193,6 @@ def actualizar_zonificacion():
             })
         log("map Zonificación actualizada")
         time.sleep(INTERVALO_ACTUALIZACION)
-
 # ------------------ Simulación de Ruta ------------------
 def simulate_route_loop():
     while not STOP_EVENT.is_set():
@@ -1283,7 +1206,6 @@ def simulate_route_loop():
             jittered_sleep(1)
         simulate_network_traffic()
         jittered_sleep(10)
-
 # ------------------ Funciones auxiliares para IA ------------------
 def calcular_engagement_promedio():
     if not blockchain:
@@ -1291,10 +1213,8 @@ def calcular_engagement_promedio():
     total = sum(b['metrics'].get('engagement_rate', 0) for b in blockchain[-20:] if 'metrics' in b)
     count = len([b for b in blockchain[-20:] if 'metrics' in b])
     return total / count if count > 0 else 0.0
-
 def obtener_top_usuarios(n=3):
     return [f"user_{i}" for i in range(1, n+1)]
-
 # ------------------ Limpieza ------------------
 def cleanup_and_exit(signum=None, frame=None):
     log("stop Iniciando limpieza...")
@@ -1308,16 +1228,14 @@ def cleanup_and_exit(signum=None, frame=None):
         log(f"error Error en limpieza: {str(e)}")
     log("success Sistema detenido correctamente")
     sys.exit(0)
-
 # ------------------ Servidor HTTP Wrapper ------------------
 class HTTPServerWrapper:
-    def __init__(self, host="0.0.0.0", port=5000, directory=str(SIM_DIR)):
+    def __init__(self, host="0.0.0.0", port=HTTP_PORT, directory=str(SIM_DIR)):
         self.host = host
         self.port = port
         self.directory = directory
         self.httpd = None
         self.thread = None
-
     def start(self):
         if not SIM_DIR.exists():
             SIM_DIR.mkdir(parents=True, exist_ok=True)
@@ -1335,12 +1253,10 @@ class HTTPServerWrapper:
             host = "127.0.0.1"
         log(f"http Servidor HTTP iniciado: http://{host}:{self.port}")
         return True
-
     def stop(self):
         if self.httpd:
             self.httpd.shutdown()
             self.httpd.server_close()
-
 # ------------------ HTTP Server ------------------
 class UnifiedHandler(SimpleHTTPRequestHandler):
     def _set_cors_headers(self):
@@ -1348,12 +1264,10 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, User-Agent, X-Requested-With, Cookie')
         self.send_header('Access-Control-Allow-Credentials', 'true')
-
     def do_OPTIONS(self):
         self.send_response(200)
         self._set_cors_headers()
         self.end_headers()
-
     def do_GET(self):
         global WEB_ACCESSED
         if self.path in ['/', '/mining_demo', '/api/logs', '/ia/estado', '/ia/recomendaciones']:
@@ -1408,14 +1322,12 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
         response_cookie[session_id]['path'] = '/'
         response_cookie[session_id]['httponly'] = True
         response_cookie[session_id]['samesite'] = 'Lax'
-
         if self.path == '/' or self.path == '/mining_demo':
             log(f"http Sirviendo página de demostración mejorada: {self.path}")
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.send_header('Set-Cookie', response_cookie.output(header='').strip())
             self.end_headers()
-
             # ✅ HTML IDÉNTICO AL DE app.py con escape correcto en JS
             html_content = """
             <!DOCTYPE html>
@@ -1743,7 +1655,6 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
                 log(f"❌ Error enviando HTML: {e}")
                 self.send_error(500, "Error interno al generar página")
             return
-
         if self.path == '/api/logs':
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -1761,7 +1672,6 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
             response_data = {"logs": recent_logs, "stats": stats_data}
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
             return
-
         if self.path == '/ia/estado':
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -1781,7 +1691,6 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
             else:
                 self.wfile.write(json.dumps({"error": "IA no inicializada"}).encode())
             return
-
         if self.path == '/ia/recomendaciones':
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -1799,9 +1708,7 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
             else:
                 self.wfile.write(json.dumps({"error": "IA no inicializada"}).encode())
             return
-
         self.send_error(404, "Recurso no encontrado")
-
     def do_POST(self):
         global WEB_ACCESSED
         if not WEB_ACCESSED:
@@ -1811,7 +1718,6 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
         self._set_cors_headers()
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
-
         if self.path == '/ia/consultar':
             try:
                 data = json.loads(body.decode('utf-8'))
@@ -1841,7 +1747,6 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": f"Error interno: {str(e)}"}).encode())
                 return
-
         if self.path == '/mock/start_mining_socialcoin':
             try:
                 data = json.loads(body.decode('utf-8'))
@@ -1873,7 +1778,6 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": f"Error simulando minería: {str(e)}"}).encode())
                 return
-
         if self.path == '/mock/payment':
             delay = random.uniform(0.05, 0.6)
             time.sleep(delay)
@@ -1883,28 +1787,17 @@ class UnifiedHandler(SimpleHTTPRequestHandler):
             resp = {"status": "ok", "transaction_id": f"tx_{random.randint(100000,999999)}", "latency_ms": int(delay * 1000)}
             self.wfile.write(json.dumps(resp).encode())
             return
-
         self.send_error(405, "Método no permitido")
-
     def _cleanup_expired_cookies(self):
         now = time.time()
         with COOKIE_LOCK:
             expired = [k for k, v in ACTIVE_COOKIES.items() if isinstance(v, dict) and now > v.get("expiry", 0)]
             for k in expired:
                 del ACTIVE_COOKIES[k]
-
     def log_message(self, fmt, *args):
         if VERBOSE_HTTP:
             log(fmt % args)
-
 # ------------------ MAIN ------------------
-def find_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        s.listen(1)
-        port = s.getsockname()[1]
-    return port
-
 def main():
     log("start 🧠 Iniciando UBER DAIMON VIVO — Neurona Autónoma + IA SOCIALCOIN")
     cargar_estado()
@@ -1914,29 +1807,27 @@ def main():
     IA_READY = True
     signal.signal(signal.SIGINT, cleanup_and_exit)
     signal.signal(signal.SIGTERM, cleanup_and_exit)
-    global HTTP_PORT
-    desired_port = 5000
-    try:
-        http_test = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        http_test.bind(("0.0.0.0", desired_port))
-        http_test.close()
-        HTTP_PORT = desired_port
-    except OSError:
-        HTTP_PORT = find_free_port()
+    
+    # 🔥 RENDER & GITHUB: Puerto HTTP ya configurado desde variable de entorno PORT
     log(f"🌐 Puerto HTTP elegido: {HTTP_PORT}")
-    print(f"\n🌍 Accede desde tu navegador: http://localhost:{HTTP_PORT}\n")
+    host = "0.0.0.0" if os.getenv("RENDER") else "localhost"
+    print(f"\n🌍 Accede desde tu navegador: http://{host if host != '0.0.0.0' else 'localhost'}:{HTTP_PORT}\n")
+
     global http_server_wrapper
     http_server_wrapper = HTTPServerWrapper(port=HTTP_PORT)
     if not http_server_wrapper.start():
         log("❌ No se pudo iniciar el servidor HTTP. Saliendo.")
         cleanup_and_exit()
         return
+
     for p in [SIM_DIR, SONIDOS_DIR, LOGS_FAKE_DIR]:
         p.mkdir(parents=True, exist_ok=True)
+
     threading.Thread(target=daimon_autonomous_loop, daemon=True).start()
     threading.Thread(target=actualizar_zonificacion, daemon=True).start()
     threading.Thread(target=simulate_route_loop, daemon=True).start()
     threading.Thread(target=mente_autonoma_socialcoin, daemon=True).start()
+
     log("success Sistema iniciado — Daimon Vivo + IA SocialCoin activos en segundo plano.")
     if DURACION > 0:
         time.sleep(DURACION)
@@ -1958,6 +1849,7 @@ if __name__ == "__main__":
         print("✅ Agentes IA negociando parámetros")
         print("✅ Minería adaptada a redes sociales")
         print("✅ Compatible con localhost y Google Sites")
+        print("✅ RENDER & GITHUB READY: sin Gunicorn, puerto dinámico $PORT")
         print("="*70)
         main()
     except KeyboardInterrupt:
